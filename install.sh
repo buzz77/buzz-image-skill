@@ -11,9 +11,10 @@
 # 不读取、不打印 API key。依赖: bash、curl 与常见的 coreutils。
 ################################################################################
 
-BUZZ_SITES="https://buzzai.cc https://buzzgw.com"
+# buzzgw.com first: reachable on networks where buzzai.cc is blocked; buzzai.cc as fallback.
+BUZZ_SITES="https://buzzgw.com https://buzzai.cc"
 SKILL_REL="sh/skills/buzz-image"
-DOCS_URL="https://buzzai.cc/docs/guides/claude-code-image.html"
+DOCS_URL="https://buzzgw.com/docs/guides/claude-code-image.html"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -87,7 +88,7 @@ show_help() {
     bash buzz-image.sh --help                                show this help
 
   Environment:
-    BUZZ_SITE=URL             download site (default: try buzzai.cc, then buzzgw.com)
+    BUZZ_SITE=URL             download site (default: try buzzgw.com, then buzzai.cc)
     CLAUDE_CONFIG_DIR=DIR     Claude Code config dir (default: ~/.claude)
     BUZZ_IMAGE_UNINSTALL=1    same as --uninstall
 
@@ -103,7 +104,7 @@ EOF
     bash buzz-image.sh --help                                显示帮助
 
   环境变量:
-    BUZZ_SITE=URL             指定下载站点(默认依次尝试 buzzai.cc、buzzgw.com)
+    BUZZ_SITE=URL             指定下载站点(默认依次尝试 buzzgw.com、buzzai.cc)
     CLAUDE_CONFIG_DIR=DIR     Claude Code 配置目录(默认 ~/.claude)
     BUZZ_IMAGE_UNINSTALL=1    等同于 --uninstall
 
@@ -226,11 +227,11 @@ print_installed_version() {
 }
 
 # 从 settings.local.json / settings.json 的 env 中读取 ANTHROPIC_BASE_URL(只读地址,不读 key)
-settings_base_url() {
+settings_base_url() { # settings_base_url NAME
   local f v
   for f in "$CONFIG_DIR/settings.local.json" "$CONFIG_DIR/settings.json"; do
     [ -f "$f" ] || continue
-    v="$(sed -n 's/.*"ANTHROPIC_BASE_URL"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" 2>/dev/null | head -n 1)"
+    v="$(sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$f" 2>/dev/null | head -n 1)"
     if [ -n "$v" ]; then
       printf '%s' "$v"
       return 0
@@ -242,11 +243,9 @@ settings_base_url() {
 # 未带鉴权请求 /api/status,确认 Claude Code 接入的是 BUZZ 网关。只提醒,不报错。
 check_connection() {
   local base body
-  if [ -n "${ANTHROPIC_BASE_URL:-}" ]; then
-    base="$ANTHROPIC_BASE_URL"
-  else
-    base="$(settings_base_url)"
-  fi
+  # Same order as the skill: BUZZ_BASE_URL (relay/proxy setups) wins over Claude Code's address.
+  base="${BUZZ_BASE_URL:-${ANTHROPIC_BASE_URL:-}}"
+  [ -n "$base" ] || base="$(settings_base_url BUZZ_BASE_URL || settings_base_url ANTHROPIC_BASE_URL || true)"
   base="${base%/}"
   base="${base%/v1}"
   base="${base%/}"
@@ -259,7 +258,8 @@ check_connection() {
       print_status ok "$(t "Claude Code 已接入 BUZZ。重启 Claude Code 或运行 /reload-skills,然后直接说要的图片即可。" "Claude Code is connected to BUZZ. Restart Claude Code or run /reload-skills, then just ask for an image.")"
       return 0
     fi
-    print_status warn "$(t "警告: 当前地址不是 BUZZ 网关(或暂时无法访问)" "WARNING: the configured base URL is not a BUZZ gateway (or is unreachable)")"
+    print_status warn "$(t "警告: 无法确认当前地址是 BUZZ 网关(可能暂时无法访问,或经本地中继/代理接入)" "WARNING: could not confirm the configured base URL is a BUZZ gateway (unreachable, or behind a local relay/proxy)")"
+    print_status warn "$(t "如果 Claude Code 经本地中继或代理接入 BUZZ,把 BUZZ_BASE_URL 设为你的 BUZZ API 地址即可。" "If Claude Code reaches BUZZ through a local relay or proxy, set BUZZ_BASE_URL to your BUZZ API address.")"
   fi
   print_status warn "$(t "注意: 这个 skill 只有在 Claude Code 接入 BUZZ 后才能使用。接入教程:" "Note: this skill only works when Claude Code is connected to BUZZ. Setup guide:") $DOCS_URL"
   return 0

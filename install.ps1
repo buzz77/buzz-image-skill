@@ -14,9 +14,10 @@ param(
     [switch]$Help
 )
 
-$BuzzSites = @('https://buzzai.cc', 'https://buzzgw.com')
+# buzzgw.com first: reachable on networks where buzzai.cc is blocked; buzzai.cc as fallback.
+$BuzzSites = @('https://buzzgw.com', 'https://buzzai.cc')
 $SkillRel = 'sh/skills/buzz-image'
-$DocsUrl = 'https://buzzai.cc/docs/guides/claude-code-image.html'
+$DocsUrl = 'https://buzzgw.com/docs/guides/claude-code-image.html'
 
 # Bilingual message helper. Language follows the system UI culture (en* -> English, else Chinese).
 function T([string]$zh, [string]$en) {
@@ -47,7 +48,7 @@ function Show-Help {
     Write-Host ('      ' + (T '\u5378\u8f7d' 'uninstall'))
     Write-Host ''
     Write-Host (T '  \u73af\u5883\u53d8\u91cf:' '  Environment:')
-    Write-Host (T '    BUZZ_SITE=URL             \u6307\u5b9a\u4e0b\u8f7d\u7ad9\u70b9(\u9ed8\u8ba4\u4f9d\u6b21\u5c1d\u8bd5 buzzai.cc\u3001buzzgw.com)' '    BUZZ_SITE=URL             download site (default: try buzzai.cc, then buzzgw.com)')
+    Write-Host (T '    BUZZ_SITE=URL             \u6307\u5b9a\u4e0b\u8f7d\u7ad9\u70b9(\u9ed8\u8ba4\u4f9d\u6b21\u5c1d\u8bd5 buzzgw.com\u3001buzzai.cc)' '    BUZZ_SITE=URL             download site (default: try buzzgw.com, then buzzai.cc)')
     Write-Host (T '    CLAUDE_CONFIG_DIR=DIR     Claude Code \u914d\u7f6e\u76ee\u5f55(\u9ed8\u8ba4\u4e3a\u7528\u6237\u76ee\u5f55\u4e0b\u7684 .claude)' '    CLAUDE_CONFIG_DIR=DIR     Claude Code config dir (default: $HOME\.claude)')
     Write-Host (T '    BUZZ_IMAGE_UNINSTALL=1    \u7b49\u540c\u4e8e -Uninstall' '    BUZZ_IMAGE_UNINSTALL=1    same as -Uninstall')
     Write-Host ''
@@ -65,9 +66,9 @@ function Get-InstallDir {
 }
 
 # Returns $true when the file downloaded and is non-empty / well-formed; otherwise $false.
-function Get-SkillFile([string]$Url, [string]$Dest) {
+function Get-SkillFile([string]$Url, [string]$Dest, [int]$TimeoutSec = 60) {
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing -TimeoutSec 120 | Out-Null
+        Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing -TimeoutSec $TimeoutSec | Out-Null
         return $true
     } catch {
         if (Test-Path -LiteralPath $Dest) {
@@ -109,7 +110,7 @@ function Select-Site([string]$TmpDir) {
     foreach ($site in $candidates) {
         Write-Status 'info' (T ('\u6b63\u5728\u4ece ' + $site + ' \u4e0b\u8f7d skill \u6587\u4ef6') ('Downloading skill files from ' + $site))
         $dest = Join-Path $TmpDir 'SKILL.md'
-        if ((Get-SkillFile "$site/$SkillRel/SKILL.md" $dest) -and (Test-SkillFile $dest 'SKILL.md')) {
+        if ((Get-SkillFile "$site/$SkillRel/SKILL.md" $dest 15) -and (Test-SkillFile $dest 'SKILL.md')) {
             return $site
         }
         Write-Status 'warn' ($site + ' ' + (T '\u4e0d\u53ef\u7528,\u5c1d\u8bd5\u4e0b\u4e00\u4e2a\u7ad9\u70b9' 'unavailable, trying next site'))
@@ -181,7 +182,11 @@ function Install-Skill([string]$TmpDir) {
 }
 
 # Base URL from the environment first, then settings.local.json and settings.json (env block). Key is never read.
+# Same order as the skill: BUZZ_BASE_URL (relay/proxy setups) wins over Claude Code's address.
 function Get-BaseUrl {
+    if ($env:BUZZ_BASE_URL) {
+        return [string]$env:BUZZ_BASE_URL
+    }
     if ($env:ANTHROPIC_BASE_URL) {
         return [string]$env:ANTHROPIC_BASE_URL
     }
@@ -192,7 +197,10 @@ function Get-BaseUrl {
         }
         try {
             $json = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json
-            $v = $json.env.ANTHROPIC_BASE_URL
+            $v = $json.env.BUZZ_BASE_URL
+            if (-not $v) {
+                $v = $json.env.ANTHROPIC_BASE_URL
+            }
             if ($v) {
                 return [string]$v
             }
@@ -226,7 +234,8 @@ function Test-BuzzGateway {
             Write-Status 'ok' (T 'Claude Code \u5df2\u63a5\u5165 BUZZ\u3002\u91cd\u542f Claude Code \u6216\u8fd0\u884c /reload-skills,\u7136\u540e\u76f4\u63a5\u8bf4\u8981\u7684\u56fe\u7247\u5373\u53ef\u3002' 'Claude Code is connected to BUZZ. Restart Claude Code or run /reload-skills, then just ask for an image.')
             return
         }
-        Write-Status 'warn' (T '\u8b66\u544a: \u5f53\u524d\u5730\u5740\u4e0d\u662f BUZZ \u7f51\u5173(\u6216\u6682\u65f6\u65e0\u6cd5\u8bbf\u95ee)' 'WARNING: the configured base URL is not a BUZZ gateway (or is unreachable)')
+        Write-Status 'warn' (T '\u8b66\u544a: \u65e0\u6cd5\u786e\u8ba4\u5f53\u524d\u5730\u5740\u662f BUZZ \u7f51\u5173(\u53ef\u80fd\u6682\u65f6\u65e0\u6cd5\u8bbf\u95ee,\u6216\u7ecf\u672c\u5730\u4e2d\u7ee7/\u4ee3\u7406\u63a5\u5165)' 'WARNING: could not confirm the configured base URL is a BUZZ gateway (unreachable, or behind a local relay/proxy)')
+        Write-Status 'warn' (T '\u5982\u679c Claude Code \u7ecf\u672c\u5730\u4e2d\u7ee7\u6216\u4ee3\u7406\u63a5\u5165 BUZZ,\u628a BUZZ_BASE_URL \u8bbe\u4e3a\u4f60\u7684 BUZZ API \u5730\u5740\u5373\u53ef\u3002' 'If Claude Code reaches BUZZ through a local relay or proxy, set BUZZ_BASE_URL to your BUZZ API address.')
     }
     Write-Status 'warn' ((T '\u6ce8\u610f: \u8fd9\u4e2a skill \u53ea\u6709\u5728 Claude Code \u63a5\u5165 BUZZ \u540e\u624d\u80fd\u4f7f\u7528\u3002\u63a5\u5165\u6559\u7a0b:' 'Note: this skill only works when Claude Code is connected to BUZZ. Setup guide:') + ' ' + $DocsUrl)
 }

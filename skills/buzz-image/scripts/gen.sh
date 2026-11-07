@@ -11,15 +11,16 @@
 #         size and then cropped/scaled locally to exactly WxH.
 #
 # stdout: exactly one JSON line. Exit code 0 on success, non-zero on failure.
-# The key is read from Claude Code's own config and is only sent to the address
-# Claude Code already uses, after that address identifies itself as BUZZ.
+# The key is read from Claude Code's own config (env, settings.json or its
+# apiKeyHelper) and is only sent to the address Claude Code already uses (or to
+# BUZZ_BASE_URL when set), after that address identifies itself as BUZZ.
 set -u
 
 PROMPT="" OUT="" MODEL="" SIZE="" QUALITY="" BACKGROUND="" FORMAT="png" N=1 MASK=""
 LIST_MODELS=0
 REFS=()
 
-BUZZ_IMAGE_VERSION="1.0"
+BUZZ_IMAGE_VERSION="1.1"
 # Every request identifies itself, so gateway logs can tell skill traffic apart.
 curl() { command curl -A "buzz-image/$BUZZ_IMAGE_VERSION" "$@"; }
 
@@ -108,34 +109,52 @@ esac
 
 # ---------------------------------------------------------------- Claude Code config
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-settings_val() { # read "KEY": "value" from Claude Code settings (env block)
+settings_val() { # read "KEY": "value" from Claude Code settings (env block or top level)
   local f v
   for f in "$CONFIG_DIR/settings.local.json" "$CONFIG_DIR/settings.json"; do
     [ -f "$f" ] || continue
-    v="$(grep -o "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$f" 2>/dev/null | head -1 | sed -E 's/.*:[[:space:]]*"([^"]*)"$/\1/')"
+    v="$(grep -oE "\"$1\"[[:space:]]*:[[:space:]]*\"([^\"\\\\]|\\\\.)*\"" "$f" 2>/dev/null | head -n 1 \
+      | sed -E 's/^"[^"]*"[[:space:]]*:[[:space:]]*"(.*)"$/\1/; s/\\"/"/g; s#\\/#/#g; s/\\\\/\\/g')"
     [ -n "$v" ] && { printf '%s' "$v"; return 0; }
   done
   return 1
 }
 
-BASE="${ANTHROPIC_BASE_URL:-}"
-[ -n "$BASE" ] || BASE="$(settings_val ANTHROPIC_BASE_URL || true)"
+# BUZZ_BASE_URL overrides Claude Code's address, for setups where Claude Code
+# talks to BUZZ through a local relay or proxy.
+BASE="${BUZZ_BASE_URL:-${ANTHROPIC_BASE_URL:-}}"
+[ -n "$BASE" ] || BASE="$(settings_val BUZZ_BASE_URL || settings_val ANTHROPIC_BASE_URL || true)"
 KEY="${ANTHROPIC_AUTH_TOKEN:-${ANTHROPIC_API_KEY:-}}"
 [ -n "$KEY" ] || KEY="$(settings_val ANTHROPIC_AUTH_TOKEN || settings_val ANTHROPIC_API_KEY || true)"
+if [ -z "$KEY" ]; then
+  # Claude Code's apiKeyHelper: a command that prints the key. Run it the same way.
+  HELPER="$(settings_val apiKeyHelper || true)"
+  [ -n "$HELPER" ] && KEY="$(bash -c "$HELPER" 2>/dev/null | head -n 1 | tr -d '\r\n' || true)"
+fi
 [ -n "$BASE" ] || fail not_buzz "Claude Code is not connected to BUZZ (ANTHROPIC_BASE_URL is not set)."
 BASE="${BASE%/}"; BASE="${BASE%/v1}"; BASE="${BASE%/}"
-
-# Identify the gateway before any key leaves this machine.
-STATUS="$(curl -sS --max-time 20 "$BASE/api/status" 2>/dev/null || true)"
-printf '%s' "$STATUS" | grep -Eq '"gateway"[[:space:]]*:[[:space:]]*"buzz"' \
-  || fail not_buzz "Claude Code is connected to a gateway that is not BUZZ; buzz-image only works with BUZZ."
-[ -n "$KEY" ] || fail no_key "No API key found in Claude Code's configuration."
 
 TMP="$(mktemp -d 2>/dev/null || mktemp -d -t buzzimg)"
 trap 'rm -rf "$TMP"' EXIT
 
+# The key goes into a private curl config file, never onto a command line where
+# other processes could read it from the process list.
+AUTH="$TMP/auth.cfg"
+( umask 077; printf 'header = "Authorization: Bearer %s"\n' "$KEY" > "$AUTH" )
+
+# Identify the gateway before any key leaves this machine. A relay in front of
+# BUZZ may refuse anonymous requests, so retry once with the key: it goes only to
+# the address Claude Code already sends it to (or the BUZZ_BASE_URL the user set).
+is_buzz() { printf '%s' "$1" | grep -Eq '"gateway"[[:space:]]*:[[:space:]]*"buzz"'; }
+STATUS="$(curl -sS --max-time 20 "$BASE/api/status" 2>/dev/null || true)"
+if ! is_buzz "$STATUS" && [ -n "$KEY" ]; then
+  STATUS="$(curl -sS --max-time 20 -K "$AUTH" "$BASE/api/status" 2>/dev/null || true)"
+fi
+is_buzz "$STATUS" || fail not_buzz "$BASE did not identify itself as BUZZ, so buzz-image will not use it. If Claude Code reaches BUZZ through a local relay or proxy, set BUZZ_BASE_URL to your BUZZ API address (as an environment variable, or in the env block of Claude Code's settings.json)."
+[ -n "$KEY" ] || fail no_key "No API key found in Claude Code's configuration."
+
 # ---------------------------------------------------------------- models
-MCODE="$(curl -sS --max-time 30 -o "$TMP/models.json" -w '%{http_code}' -H "Authorization: Bearer $KEY" "$BASE/v1/models" 2>/dev/null)" || MCODE="000"
+MCODE="$(curl -sS --max-time 30 -o "$TMP/models.json" -w '%{http_code}' -K "$AUTH" "$BASE/v1/models" 2>/dev/null)" || MCODE="000"
 if [ "$MCODE" != "200" ]; then
   msg="$(grep -o '"message"[[:space:]]*:[[:space:]]*"[^"]*"' "$TMP/models.json" 2>/dev/null | head -1 | sed -E 's/.*:[[:space:]]*"(.*)"$/\1/')"
   fail http_error "Could not list models (HTTP $MCODE)${msg:+: $msg}"
@@ -169,6 +188,10 @@ STEM="${OUT%.*}"; OEXT="${OUT##*.}"
 unique_path() { local p="$OUT" i=2; while [ -e "$p" ]; do p="${STEM}-${i}.${OEXT}"; i=$((i+1)); done; printf '%s' "$p"; }
 
 # ---------------------------------------------------------------- requests
+# Git Bash's curl is a native Windows program: inside "-F name=@path" the shell
+# does not translate /c/... or /tmp/... paths for it, so do it here.
+native_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
+
 b64decode() { base64 -d 2>/dev/null || base64 -D; }
 
 request_one() { # one image per request; runs in the background
@@ -179,9 +202,9 @@ request_one() { # one image per request; runs in the background
     [ -n "$GEN_SIZE" ] && args+=(--form-string "size=$GEN_SIZE")
     [ -n "$QUALITY" ] && args+=(--form-string "quality=$QUALITY")
     [ -n "$BACKGROUND" ] && args+=(--form-string "background=$BACKGROUND")
-    local r; for r in "${REFS[@]}"; do args+=(-F "image[]=@$r"); done
-    [ -n "$MASK" ] && args+=(-F "mask=@$MASK")
-    code="$(curl -sS --max-time 540 -o "$resp" -w '%{http_code}' -H "Authorization: Bearer $KEY" "${args[@]}" "$BASE/v1/images/edits" 2>"$TMP/err-$i")"
+    local r; for r in "${REFS[@]}"; do args+=(-F "image[]=@$(native_path "$r")"); done
+    [ -n "$MASK" ] && args+=(-F "mask=@$(native_path "$MASK")")
+    code="$(curl -sS --max-time 540 -o "$resp" -w '%{http_code}' -K "$AUTH" "${args[@]}" "$BASE/v1/images/edits" 2>"$TMP/err-$i")"
     rc=$?
   else
     local body="{\"model\":\"$(json_escape "$MODEL")\",\"prompt\":\"$(json_escape "$PROMPT")\",\"n\":1,\"output_format\":\"$FORMAT\""
@@ -190,7 +213,7 @@ request_one() { # one image per request; runs in the background
     [ -n "$BACKGROUND" ] && body="$body,\"background\":\"$BACKGROUND\""
     body="$body}"
     code="$(printf '%s' "$body" | curl -sS --max-time 540 -o "$resp" -w '%{http_code}' \
-      -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" --data-binary @- \
+      -K "$AUTH" -H "Content-Type: application/json" --data-binary @- \
       "$BASE/v1/images/generations" 2>"$TMP/err-$i")"
     rc=$?
   fi
@@ -218,8 +241,8 @@ classify() { # classify HTTP_CODE RESPONSE_FILE -> "code|message"
 # ---------------------------------------------------------------- local resize
 # Cover-scale then centre-crop to exactly TARGET_W x TARGET_H, keeping alpha.
 resize_reason=""
-resize_to_target() { # resize_to_target FILE -> 0 ok / 1 not done (reason in resize_reason)
-  local f="$1" tw="$TARGET_W" th="$TARGET_H" tmp="$TMP/resize.$OEXT"
+resize_to_target() { # resize_to_target FILE W H -> 0 ok / 1 not done (reason in resize_reason)
+  local f="$1" tw="$2" th="$3" tmp="$TMP/resize.$OEXT"
   if command -v sips >/dev/null 2>&1; then
     if [ "$FORMAT" = "webp" ]; then resize_reason="sips cannot write webp"; return 1; fi
     local w h
@@ -266,13 +289,40 @@ resize_to_target() { # resize_to_target FILE -> 0 ok / 1 not done (reason in res
   return 1
 }
 
+# Pixel size of a saved image as "W H"; empty when it cannot be read.
+image_dims() {
+  local f="$1" d=""
+  if [ "$(head -c 8 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "89504e470d0a1a0a" ]; then
+    od -An -tu1 -j16 -N8 "$f" | tr '\n' ' ' | awk 'NF>=8{printf "%d %d", (($1*256+$2)*256+$3)*256+$4, (($5*256+$6)*256+$7)*256+$8}'
+    return
+  fi
+  if command -v sips >/dev/null 2>&1; then
+    d="$(sips -g pixelWidth -g pixelHeight "$f" 2>/dev/null | awk '/pixelWidth/{w=$2} /pixelHeight/{h=$2} END{if (w && h) printf "%d %d", w, h}')"
+  elif command -v magick >/dev/null 2>&1; then
+    d="$(magick identify -format '%w %h' "$f[0]" 2>/dev/null)"
+  elif command -v identify >/dev/null 2>&1; then
+    d="$(identify -format '%w %h' "$f[0]" 2>/dev/null)"
+  elif command -v powershell.exe >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+    d="$(BUZZ_RS_IN="$(cygpath -w "$f")" powershell.exe -NoProfile -NonInteractive -Command '
+      Add-Type -AssemblyName System.Drawing
+      $i = [System.Drawing.Image]::FromFile($env:BUZZ_RS_IN); "$($i.Width) $($i.Height)"; $i.Dispose()' 2>/dev/null | tr -d '\r')"
+  fi
+  if printf '%s' "$d" | grep -Eq '^[0-9]+ [0-9]+$'; then printf '%s' "$d"; fi
+}
+
+# The size the saved files must end up at: an exact -s WxH, or the size sent to
+# the model. Models may return fewer pixels than asked (same aspect ratio), so
+# every file is measured and scaled to this size when it differs.
+WANT_W="$TARGET_W" WANT_H="$TARGET_H"
+if [ -z "$WANT_W" ] && [ -n "$GEN_SIZE" ]; then WANT_W="${GEN_SIZE%x*}"; WANT_H="${GEN_SIZE#*x}"; fi
+
 # ---------------------------------------------------------------- run
 START=$(date +%s)
 for i in $(seq 1 "$N"); do request_one "$i" & done
 wait
 ELAPSED=$(( $(date +%s) - START ))
 
-FILES=() ERRORS=() FIRST_CODE="" FIRST_MSG="" RESIZED="" RESIZE_NOTE=""
+FILES=() ERRORS=() FIRST_CODE="" FIRST_MSG="" RESIZED="" RESIZE_NOTE="" GOT_SIZE="" FINAL_SIZE=""
 for i in $(seq 1 "$N"); do
   resp="$TMP/resp-$i.json"; code="$(cat "$TMP/code-$i" 2>/dev/null || echo 000)"
   b64="" url=""
@@ -298,9 +348,23 @@ for i in $(seq 1 "$N"); do
     [ -n "$FIRST_CODE" ] || { FIRST_CODE="http_error"; FIRST_MSG="could not save the image"; }
     continue
   fi
-  if [ -n "$TARGET_W" ]; then
-    if resize_to_target "$target"; then RESIZED="true"; else RESIZED="false"; RESIZE_NOTE="$resize_reason"; fi
+  dims="$(image_dims "$target")"
+  [ -n "$GOT_SIZE" ] || GOT_SIZE="${dims/ /x}"
+  # Scale when the measured size differs. If it can't be measured, scale only
+  # sizes the model can't produce at all (it never returns those as asked).
+  need=0
+  if [ -n "$WANT_W" ]; then
+    if [ -n "$dims" ]; then [ "$dims" != "$WANT_W $WANT_H" ] && need=1
+    elif [ -n "$TARGET_W" ]; then need=1; fi
   fi
+  if [ "$need" -eq 1 ]; then
+    if resize_to_target "$target" "$WANT_W" "$WANT_H"; then
+      RESIZED="true"; dims="$(image_dims "$target")"; [ -n "$dims" ] || dims="$WANT_W $WANT_H"
+    else
+      RESIZED="false"; RESIZE_NOTE="$resize_reason"
+    fi
+  fi
+  [ -n "$FINAL_SIZE" ] || FINAL_SIZE="${dims/ /x}"
   FILES+=("$target")
 done
 
@@ -312,11 +376,12 @@ if [ ${#FILES[@]} -eq 0 ]; then
   exit 1
 fi
 
-FINAL_SIZE="${GEN_SIZE:-auto}"
-[ "$RESIZED" = "true" ] && FINAL_SIZE="${TARGET_W}x${TARGET_H}"
+# size: measured pixels of the saved file(s); generated_size: what the model returned.
+[ -n "$FINAL_SIZE" ] || FINAL_SIZE="unknown"
+[ -n "$GOT_SIZE" ] || GOT_SIZE="unknown"
 extra=""
-[ -n "$TARGET_W" ] && extra=",\"requested_size\":\"${TARGET_W}x${TARGET_H}\",\"resized\":${RESIZED:-false}"
+[ -n "$WANT_W" ] && extra=",\"requested_size\":\"${WANT_W}x${WANT_H}\",\"resized\":${RESIZED:-false}"
 [ -n "$RESIZE_NOTE" ] && extra="$extra,\"resize_note\":\"$(json_escape "$RESIZE_NOTE")\""
 printf '{"ok":true,"model":"%s","files":%s,"size":"%s","generated_size":"%s"%s,"seconds":%d,"errors":%s}\n' \
-  "$MODEL" "$(list_json "${FILES[@]}")" "$FINAL_SIZE" "${GEN_SIZE:-auto}" "$extra" "$ELAPSED" \
+  "$MODEL" "$(list_json "${FILES[@]}")" "$FINAL_SIZE" "$GOT_SIZE" "$extra" "$ELAPSED" \
   "$(list_json "${ERRORS[@]+"${ERRORS[@]}"}")"

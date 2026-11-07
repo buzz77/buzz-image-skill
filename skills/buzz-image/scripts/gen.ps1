@@ -79,23 +79,50 @@ if ($Size -and $Size -ne "auto") {
 
 # ------------------------------------------------------------------ Claude Code config
 $configDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME ".claude" }
-function SettingsVal([string]$name) {
+# Reads a value from the env block of Claude Code's settings, or a top-level key with -Top.
+function SettingsVal([string]$name, [switch]$Top) {
   foreach ($f in @((Join-Path $configDir "settings.local.json"), (Join-Path $configDir "settings.json"))) {
     if (Test-Path -LiteralPath $f) {
       try {
         $j = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($j.env -and $j.env.$name) { return [string]$j.env.$name }
+        if ($Top) { if ($j.$name) { return [string]$j.$name } }
+        elseif ($j.env -and $j.env.$name) { return [string]$j.env.$name }
       } catch { }
     }
   }
   return ""
 }
-$base = $env:ANTHROPIC_BASE_URL
+# BUZZ_BASE_URL overrides Claude Code's address, for setups where Claude Code
+# talks to BUZZ through a local relay or proxy.
+$base = $env:BUZZ_BASE_URL
+if (-not $base) { $base = $env:ANTHROPIC_BASE_URL }
+if (-not $base) { $base = SettingsVal "BUZZ_BASE_URL" }
 if (-not $base) { $base = SettingsVal "ANTHROPIC_BASE_URL" }
 $key = $env:ANTHROPIC_AUTH_TOKEN
 if (-not $key) { $key = $env:ANTHROPIC_API_KEY }
 if (-not $key) { $key = SettingsVal "ANTHROPIC_AUTH_TOKEN" }
 if (-not $key) { $key = SettingsVal "ANTHROPIC_API_KEY" }
+if (-not $key) {
+  # Claude Code's apiKeyHelper: a command that prints the key.
+  $helper = SettingsVal "apiKeyHelper" -Top
+  if ($helper) {
+    try {
+      # Claude Code on Windows runs shell commands with Git Bash; find it the same way.
+      $sh = $env:CLAUDE_CODE_GIT_BASH_PATH
+      if (-not $sh -or -not (Test-Path -LiteralPath $sh)) {
+        $sh = $null
+        $git = Get-Command git.exe -ErrorAction SilentlyContinue
+        if ($git) {
+          $root = Split-Path (Split-Path $git.Source -Parent) -Parent
+          foreach ($c in @((Join-Path $root 'bin\bash.exe'), (Join-Path $root 'usr\bin\bash.exe'))) { if (Test-Path -LiteralPath $c) { $sh = $c; break } }
+        }
+      }
+      $outLines = if ($sh) { & $sh -c $helper 2>$null } else { & cmd.exe /d /c $helper 2>$null }
+      $first = @($outLines | Where-Object { "$_".Trim() })[0]
+      if ($first) { $key = "$first".Trim() }
+    } catch { }
+  }
+}
 if (-not $base) { Fail "not_buzz" "Claude Code is not connected to BUZZ (ANTHROPIC_BASE_URL is not set)." }
 $base = $base.TrimEnd("/")
 if ($base.EndsWith("/v1")) { $base = $base.Substring(0, $base.Length - 3).TrimEnd("/") }
@@ -105,13 +132,22 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::S
 
 # Identify the gateway before any key leaves this machine.
 $probe = New-Object System.Net.Http.HttpClient
-$userAgent = "buzz-image/1.0"
+$userAgent = "buzz-image/1.1"
 $probe.DefaultRequestHeaders.UserAgent.ParseAdd($userAgent)
 $probe.Timeout = [TimeSpan]::FromSeconds(20)
 $statusText = ""
 try { $statusText = $probe.GetStringAsync("$base/api/status").GetAwaiter().GetResult() } catch { }
+# A relay in front of BUZZ may refuse anonymous requests, so retry once with the
+# key: it goes only to the address Claude Code already sends it to.
+if ($statusText -notmatch '"gateway"\s*:\s*"buzz"' -and $key) {
+  try {
+    $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "$base/api/status")
+    $req.Headers.Authorization = New-Object System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", $key)
+    $statusText = $probe.SendAsync($req).GetAwaiter().GetResult().Content.ReadAsStringAsync().GetAwaiter().GetResult()
+  } catch { }
+}
 if ($statusText -notmatch '"gateway"\s*:\s*"buzz"') {
-  Fail "not_buzz" "Claude Code is connected to a gateway that is not BUZZ; buzz-image only works with BUZZ."
+  Fail "not_buzz" "$base did not identify itself as BUZZ, so buzz-image will not use it. If Claude Code reaches BUZZ through a local relay or proxy, set BUZZ_BASE_URL to your BUZZ API address (as an environment variable, or in the env block of Claude Code's settings.json)."
 }
 if (-not $key) { Fail "no_key" "No API key found in Claude Code's configuration." }
 
@@ -211,8 +247,32 @@ function Classify([int]$http, [string]$text) {
   return @("http_error", ("HTTP {0}{1}" -f $http, $(if ($msg) { ": $msg" } else { "" })))
 }
 
-# Cover-scale then centre-crop to exactly targetW x targetH, keeping alpha.
+# Pixel size of a saved image as @(w, h); $null when it cannot be read.
+function ImageDims([string]$path) {
+  try {
+    $fs = [IO.File]::OpenRead($path)
+    try { $hd = New-Object byte[] 24; $read = $fs.Read($hd, 0, 24) } finally { $fs.Dispose() }
+    if ($read -eq 24 -and $hd[0] -eq 0x89 -and $hd[1] -eq 0x50 -and $hd[2] -eq 0x4E -and $hd[3] -eq 0x47) {
+      $w = (([int]$hd[16] -shl 24) -bor ([int]$hd[17] -shl 16) -bor ([int]$hd[18] -shl 8) -bor [int]$hd[19])
+      $h = (([int]$hd[20] -shl 24) -bor ([int]$hd[21] -shl 16) -bor ([int]$hd[22] -shl 8) -bor [int]$hd[23])
+      return @($w, $h)
+    }
+    Add-Type -AssemblyName System.Drawing
+    $ms = New-Object IO.MemoryStream(, [IO.File]::ReadAllBytes($path))
+    $img = [System.Drawing.Image]::FromStream($ms)
+    try { return @($img.Width, $img.Height) } finally { $img.Dispose(); $ms.Dispose() }
+  } catch { return $null }
+}
+
+# The size the saved files must end up at: an exact -Size WxH, or the size sent to
+# the model. Models may return fewer pixels than asked (same aspect ratio), so
+# every file is measured and scaled to this size when it differs.
+$wantW = $targetW; $wantH = $targetH
+if ($wantW -eq 0 -and $genSize) { $wantW = [int]($genSize.Split("x")[0]); $wantH = [int]($genSize.Split("x")[1]) }
+
+# Cover-scale then centre-crop to exactly wantW x wantH, keeping alpha.
 function ResizeToTarget([string]$path) {
+  $targetW = $wantW; $targetH = $wantH
   if ($Format -eq "webp") { return "Windows built-in imaging cannot write webp" }
   try {
     Add-Type -AssemblyName System.Drawing
@@ -240,7 +300,7 @@ $sw = [Diagnostics.Stopwatch]::StartNew()
 $tasks = @(); for ($i = 0; $i -lt $N; $i++) { $tasks += NewRequest }
 $files = New-Object System.Collections.ArrayList
 $errors = New-Object System.Collections.ArrayList
-$firstCode = ""; $firstMsg = ""; $resized = $null; $resizeNote = ""
+$firstCode = ""; $firstMsg = ""; $resized = $null; $resizeNote = ""; $gotSize = ""; $finalSize = ""
 
 foreach ($t in $tasks) {
   try {
@@ -274,10 +334,21 @@ foreach ($t in $tasks) {
     [void]$errors.Add("could not save the image"); if (-not $firstCode) { $firstCode = "http_error"; $firstMsg = "could not save the image" }
     continue
   }
-  if ($targetW -gt 0) {
-    $why = ResizeToTarget $target
-    if ($why) { $resized = $false; $resizeNote = $why } else { $resized = $true }
+  $dims = ImageDims $target
+  if (-not $gotSize -and $dims) { $gotSize = "$($dims[0])x$($dims[1])" }
+  # Scale when the measured size differs. If it can't be measured, scale only
+  # sizes the model can't produce at all (it never returns those as asked).
+  $need = $false
+  if ($wantW -gt 0) {
+    if ($dims) { $need = ($dims[0] -ne $wantW -or $dims[1] -ne $wantH) }
+    elseif ($targetW -gt 0) { $need = $true }
   }
+  if ($need) {
+    $why = ResizeToTarget $target
+    if ($why) { $resized = $false; $resizeNote = $why }
+    else { $resized = $true; $dims = ImageDims $target; if (-not $dims) { $dims = @($wantW, $wantH) } }
+  }
+  if (-not $finalSize -and $dims) { $finalSize = "$($dims[0])x$($dims[1])" }
   [void]$files.Add((RelPath $target))
 }
 
@@ -286,9 +357,11 @@ if ($files.Count -eq 0) {
   Emit ([ordered]@{ ok = $false; code = $(if ($firstCode) { $firstCode } else { "http_error" }); message = $firstMsg; model = $Model; seconds = $elapsed; errors = @($errors) })
   exit 1
 }
-$genLabel = if ($genSize) { $genSize } else { "auto" }
-$result = [ordered]@{ ok = $true; model = $Model; files = @($files); size = $(if ($resized -eq $true) { "${targetW}x${targetH}" } else { $genLabel }); generated_size = $genLabel }
-if ($targetW -gt 0) { $result["requested_size"] = "${targetW}x${targetH}"; $result["resized"] = ($resized -eq $true) }
+# size: measured pixels of the saved file(s); generated_size: what the model returned.
+if (-not $finalSize) { $finalSize = "unknown" }
+if (-not $gotSize) { $gotSize = "unknown" }
+$result = [ordered]@{ ok = $true; model = $Model; files = @($files); size = $finalSize; generated_size = $gotSize }
+if ($wantW -gt 0) { $result["requested_size"] = "${wantW}x${wantH}"; $result["resized"] = ($resized -eq $true) }
 if ($resizeNote) { $result["resize_note"] = $resizeNote }
 $result["seconds"] = $elapsed
 $result["errors"] = @($errors)

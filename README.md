@@ -33,7 +33,11 @@ Windows PowerShell:
 irm https://buzzai.cc/sh/buzz-image.ps1 | iex
 ```
 
+If `buzzai.cc` does not connect from your network, use `buzzgw.com` in the command instead; both serve the same files.
+
 The skill is installed to `~/.claude/skills/buzz-image/` (respects `CLAUDE_CONFIG_DIR`). Restart Claude Code or run `/reload-skills`. Run the same command again to update.
+
+If Claude Code reaches BUZZ through a local relay or proxy, set `BUZZ_BASE_URL` to your BUZZ API address (environment variable, or the `env` block of Claude Code's `settings.json`). The key is read from Claude Code's own configuration, including `apiKeyHelper`.
 
 Alternatively, with the [`skills`](https://github.com/vercel-labs/skills) CLI:
 
@@ -85,7 +89,9 @@ $env:BUZZ_IMAGE_UNINSTALL=1; irm https://buzzai.cc/sh/buzz-image.ps1 | iex
 
 **使用要求**：Claude Code 已接入 BUZZ；密钥所在分组包含 GPT Image 模型（`gpt-image-*`），否则请在 BUZZ 控制台的令牌管理里修改分组。
 
-**安装**：macOS / Linux / Git Bash 运行 `curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash`，Windows PowerShell 运行 `irm https://buzzai.cc/sh/buzz-image.ps1 | iex`。装好后重启 Claude Code，或执行 `/reload-skills`。重新运行同一条命令即可更新。
+**安装**：macOS / Linux / Git Bash 运行 `curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash`，Windows PowerShell 运行 `irm https://buzzai.cc/sh/buzz-image.ps1 | iex`。如果 `buzzai.cc` 连不上，把命令里的域名换成 `buzzgw.com`，两者内容相同。装好后重启 Claude Code，或执行 `/reload-skills`。重新运行同一条命令即可更新。
+
+如果 Claude Code 经本地中继或代理接入 BUZZ，把 `BUZZ_BASE_URL` 设为你的 BUZZ API 地址（环境变量，或 Claude Code `settings.json` 的 `env` 块）。密钥从 Claude Code 自己的配置读取，支持 `apiKeyHelper`。
 
 完整教程：<https://buzzai.cc/docs/zh/guides/claude-code-image>
 
