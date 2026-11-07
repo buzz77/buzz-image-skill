@@ -3,7 +3,7 @@
 # Spec: docs/BUZZ_IMAGE_SKILL_DESIGN.md
 #
 #   gen.ps1 -Prompt "..." [-Out out.png] [-Model m] [-Size s] [-Quality q] [-Background b]
-#           [-Format png|jpeg|webp] [-N 1-10] [-Ref a.png,b.png] [-Mask m.png]
+#           [-Format png|jpeg|webp] [-N 1-10] [-Ref a.png,b.png] [-Mask m.png] [-NoUpscale]
 #   gen.ps1 -Models
 #
 # stdout: exactly one JSON line. Exit code 0 on success, 1 on failure.
@@ -18,8 +18,11 @@ param(
   [int]$N = 1,
   [string[]]$Ref = @(),
   [string]$Mask = "",
-  [switch]$Models
+  [switch]$Models,
+  [switch]$NoUpscale
 )
+
+$BuzzImageVersion = "1.2"
 
 $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
@@ -132,7 +135,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::S
 
 # Identify the gateway before any key leaves this machine.
 $probe = New-Object System.Net.Http.HttpClient
-$userAgent = "buzz-image/1.1"
+$userAgent = "buzz-image/$BuzzImageVersion"
 $probe.DefaultRequestHeaders.UserAgent.ParseAdd($userAgent)
 $probe.Timeout = [TimeSpan]::FromSeconds(20)
 $statusText = ""
@@ -342,6 +345,11 @@ foreach ($t in $tasks) {
   if ($wantW -gt 0) {
     if ($dims) { $need = ($dims[0] -ne $wantW -or $dims[1] -ne $wantH) }
     elseif ($targetW -gt 0) { $need = $true }
+  }
+  # -NoUpscale: a smaller image at the requested aspect ratio (within 1%) is kept as is.
+  if ($need -and $NoUpscale -and $dims -and $dims[0] -le $wantW -and $dims[1] -le $wantH) {
+    $ratio = ($dims[0] / $dims[1]) / ($wantW / $wantH)
+    if ($ratio -gt 0.99 -and $ratio -lt 1.01) { $need = $false; $resizeNote = "kept the model's smaller image as is (-NoUpscale)" }
   }
   if ($need) {
     $why = ResizeToTarget $target

@@ -1,6 +1,6 @@
 # BUZZ AI - buzz-image skill installer (Windows PowerShell 5.1+)
 #
-# Install / update: irm https://buzzai.cc/sh/buzz-image.ps1 | iex
+# Install / update: irm https://buzzgw.com/sh/buzz-image.ps1 | iex
 # Uninstall:        powershell -NoProfile -ExecutionPolicy Bypass -File buzz-image.ps1 -Uninstall
 #                   (with irm | iex, set $env:BUZZ_IMAGE_UNINSTALL = '1' first)
 # Help:             -Help
@@ -42,7 +42,7 @@ function Show-Help {
     Write-Host (T 'buzz-image \u6280\u80fd\u5b89\u88c5\u5668' 'BUZZ AI - buzz-image skill installer')
     Write-Host ''
     Write-Host (T '  \u7528\u6cd5:' '  Usage:')
-    Write-Host '    irm https://buzzai.cc/sh/buzz-image.ps1 | iex              '
+    Write-Host '    irm https://buzzgw.com/sh/buzz-image.ps1 | iex              '
     Write-Host ('      ' + (T '\u5b89\u88c5 / \u66f4\u65b0' 'install / update'))
     Write-Host '    powershell -ExecutionPolicy Bypass -File buzz-image.ps1 -Uninstall'
     Write-Host ('      ' + (T '\u5378\u8f7d' 'uninstall'))
@@ -135,9 +135,10 @@ function Download-Skill([string]$TmpDir) {
 }
 
 function Show-InstalledVersion([string]$TmpDir) {
-    $line = Select-String -LiteralPath (Join-Path $TmpDir 'SKILL.md') -Pattern '^version:' -ErrorAction SilentlyContinue | Select-Object -First 1
+    # The version lives in gen.ps1 ($BuzzImageVersion = "x.y"), the same value the skill sends as its User-Agent.
+    $line = Select-String -LiteralPath (Join-Path $TmpDir 'scripts\gen.ps1') -Pattern '^\$BuzzImageVersion\s*=' -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($line) {
-        $ver = ($line.Line -replace '^version:\s*', '').Trim().Trim('"', "'")
+        $ver = ($line.Line -replace '^\$BuzzImageVersion\s*=\s*', '').Trim().Trim('"', "'")
         if ($ver) {
             Write-Status 'info' ((T '\u7248\u672c' 'Version') + ': ' + $ver)
         }

@@ -2,8 +2,8 @@
 ################################################################################
 # BUZZ AI - buzz-image skill 安装器
 #
-# 安装 / 更新: curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash
-# 卸载:        curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash -s -- --uninstall
+# 安装 / 更新: curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash
+# 卸载:        curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash -s -- --uninstall
 #              (或设置环境变量 BUZZ_IMAGE_UNINSTALL=1)
 # 帮助:        bash buzz-image.sh --help
 #
@@ -83,7 +83,7 @@ show_help() {
   BUZZ AI - buzz-image skill installer
 
   Usage:
-    curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash     install / update
+    curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash     install / update
     bash buzz-image.sh --uninstall                           uninstall
     bash buzz-image.sh --help                                show this help
 
@@ -99,7 +99,7 @@ EOF
   BUZZ AI - buzz-image skill 安装器
 
   用法:
-    curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash     安装 / 更新
+    curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash     安装 / 更新
     bash buzz-image.sh --uninstall                           卸载
     bash buzz-image.sh --help                                显示帮助
 
@@ -218,9 +218,10 @@ install_skill() {
   die "$(t "安装失败,已还原旧版本" "install failed; previous version restored")"
 }
 
+# The version lives in gen.sh (BUZZ_IMAGE_VERSION="x.y"), the same value the skill sends as its User-Agent.
 print_installed_version() {
   local ver
-  ver="$(grep -E '^version:' "$TMP_DIR/SKILL.md" 2>/dev/null | head -n 1 | sed -E 's/^version:[[:space:]]*//' | tr -d "\"' \r")"
+  ver="$(grep -E '^BUZZ_IMAGE_VERSION=' "$TMP_DIR/scripts/gen.sh" 2>/dev/null | head -n 1 | sed -E 's/^BUZZ_IMAGE_VERSION=//' | tr -d "\"' \r")"
   if [ -n "$ver" ]; then
     print_status info "$(t "版本" "Version"): $ver"
   fi

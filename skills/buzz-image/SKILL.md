@@ -25,7 +25,7 @@ bash ${CLAUDE_SKILL_DIR}/scripts/gen.sh -p "PROMPT" -o PATH [options]
 **Otherwise use the PowerShell tool** (typical on Windows). Call the script path directly as the first word — no `&`, no quotes around the path, no nested `powershell` process, nothing chained before or after — so it matches the pre-approved shape:
 
 ```powershell
-${CLAUDE_SKILL_DIR}/scripts/gen.ps1 -Prompt "PROMPT" -Out PATH [-Size ..] [-Quality ..] [-Background ..] [-Format ..] [-N ..] [-Ref a.png,b.png] [-Mask m.png] [-Model ..]
+${CLAUDE_SKILL_DIR}/scripts/gen.ps1 -Prompt "PROMPT" -Out PATH [-Size ..] [-Quality ..] [-Background ..] [-Format ..] [-N ..] [-Ref a.png,b.png] [-Mask m.png] [-Model ..] [-NoUpscale]
 ```
 
 If Claude Code still asks the user to approve the command, that is fine — wait for the approval; never look for workarounds.
@@ -34,13 +34,14 @@ If Claude Code still asks the user to approve the command, that is fine — wait
 |---|---|
 | `-p` | Image description (required). Write it yourself from the user's request. |
 | `-o` | Output path. Pick one that fits the use (e.g. `public/favicon.png`, `assets/og.png`); otherwise put it under `generated/`. Existing files are never overwritten (`-2`, `-3`… is appended). |
-| `-s` | Exact `WxH` (any size, e.g. `32x32`, `1200x630`) or `square` / `landscape` / `portrait` / `wide` / `tall` / `2k` / `4k`. The saved file always ends up at the requested size: sizes the model can't produce are generated close by and cropped/scaled locally, and some models return fewer pixels than asked (same aspect ratio), which is then scaled up locally. Omit to let the model decide. |
+| `-s` | Exact `WxH` (any size, e.g. `32x32`, `1200x630`) or `square` / `landscape` / `portrait` / `wide` / `tall` / `2k` / `4k`. The saved file always ends up at the requested size: sizes the model can't produce are generated close by and cropped/scaled locally, and some models return fewer pixels than asked (same aspect ratio), which is then scaled up locally (see `--no-upscale`). Omit to let the model decide. |
 | `-b` | `transparent` for cutouts/stickers/icons without background (png or webp only); `opaque`; `auto`. |
 | `-q` | `low` / `medium` / `high` / `xhigh` / `max`. Omit unless the user asks or the asset needs fine detail. |
 | `-f` | `png` (default) / `jpeg` / `webp`. |
 | `-n` | Number of images, default 1. |
 | `-r` | Source/reference image; repeat for several. Any `-r` switches to edit mode, where the result is built **on top of** the reference images' content (see step 2). |
 | `--mask` | PNG mask for local edits (transparent = repaint); needs `-r`. |
+| `--no-upscale` | (PowerShell: `-NoUpscale`) If the model returns a smaller image at the requested aspect ratio, keep its original pixels instead of scaling up to the exact size. Use when the user cares more about pixel detail than exact dimensions. |
 | `-m` | Model. Omit to auto-pick the best one available to the user's key. |
 | `--models` | List the image models available to this key, without generating. |
 

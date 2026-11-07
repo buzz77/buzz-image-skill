@@ -3,12 +3,13 @@
 # Spec: docs/BUZZ_IMAGE_SKILL_DESIGN.md. Needs only curl, awk, sed, grep, base64.
 #
 #   gen.sh -p "prompt" [-o out.png] [-m model] [-s size] [-q quality] [-b background]
-#          [-f png|jpeg|webp] [-n 1-10] [-r ref.png ...] [--mask mask.png]
+#          [-f png|jpeg|webp] [-n 1-10] [-r ref.png ...] [--mask mask.png] [--no-upscale]
 #   gen.sh --models
 #
 #   size: WxH or square|landscape|portrait|wide|tall|2k|4k|auto. Sizes the model
 #         cannot produce (e.g. 32x32, 1200x630) are generated at the closest legal
-#         size and then cropped/scaled locally to exactly WxH.
+#         size and then cropped/scaled locally to exactly WxH. --no-upscale keeps a
+#         smaller image the model returned at the right aspect ratio as is.
 #
 # stdout: exactly one JSON line. Exit code 0 on success, non-zero on failure.
 # The key is read from Claude Code's own config (env, settings.json or its
@@ -17,10 +18,10 @@
 set -u
 
 PROMPT="" OUT="" MODEL="" SIZE="" QUALITY="" BACKGROUND="" FORMAT="png" N=1 MASK=""
-LIST_MODELS=0
+LIST_MODELS=0 NO_UPSCALE=0
 REFS=()
 
-BUZZ_IMAGE_VERSION="1.1"
+BUZZ_IMAGE_VERSION="1.2"
 # Every request identifies itself, so gateway logs can tell skill traffic apart.
 curl() { command curl -A "buzz-image/$BUZZ_IMAGE_VERSION" "$@"; }
 
@@ -48,6 +49,7 @@ while [ $# -gt 0 ]; do
     -r|--ref) REFS+=("${2:-}"); shift 2 ;;
     --mask) MASK="${2:-}"; shift 2 ;;
     --models) LIST_MODELS=1; shift ;;
+    --no-upscale) NO_UPSCALE=1; shift ;;
     -h|--help) usage ;;
     *) fail bad_args "unknown argument: $1" ;;
   esac
@@ -136,11 +138,12 @@ BASE="${BASE%/}"; BASE="${BASE%/v1}"; BASE="${BASE%/}"
 
 TMP="$(mktemp -d 2>/dev/null || mktemp -d -t buzzimg)"
 trap 'rm -rf "$TMP"' EXIT
+trap 'exit 130' INT TERM HUP
 
-# The key goes into a private curl config file, never onto a command line where
-# other processes could read it from the process list.
-AUTH="$TMP/auth.cfg"
-( umask 077; printf 'header = "Authorization: Bearer %s"\n' "$KEY" > "$AUTH" )
+# The key reaches curl only through a pipe (curl -K - reads its config from
+# stdin): never on a command line (process list) and never written to disk.
+# printf is a shell builtin, so it doesn't show up as a process either.
+auth_cfg() { printf 'header = "Authorization: Bearer %s"\n' "$KEY"; }
 
 # Identify the gateway before any key leaves this machine. A relay in front of
 # BUZZ may refuse anonymous requests, so retry once with the key: it goes only to
@@ -148,13 +151,13 @@ AUTH="$TMP/auth.cfg"
 is_buzz() { printf '%s' "$1" | grep -Eq '"gateway"[[:space:]]*:[[:space:]]*"buzz"'; }
 STATUS="$(curl -sS --max-time 20 "$BASE/api/status" 2>/dev/null || true)"
 if ! is_buzz "$STATUS" && [ -n "$KEY" ]; then
-  STATUS="$(curl -sS --max-time 20 -K "$AUTH" "$BASE/api/status" 2>/dev/null || true)"
+  STATUS="$(auth_cfg | curl -sS --max-time 20 -K - "$BASE/api/status" 2>/dev/null || true)"
 fi
 is_buzz "$STATUS" || fail not_buzz "$BASE did not identify itself as BUZZ, so buzz-image will not use it. If Claude Code reaches BUZZ through a local relay or proxy, set BUZZ_BASE_URL to your BUZZ API address (as an environment variable, or in the env block of Claude Code's settings.json)."
 [ -n "$KEY" ] || fail no_key "No API key found in Claude Code's configuration."
 
 # ---------------------------------------------------------------- models
-MCODE="$(curl -sS --max-time 30 -o "$TMP/models.json" -w '%{http_code}' -K "$AUTH" "$BASE/v1/models" 2>/dev/null)" || MCODE="000"
+MCODE="$(auth_cfg | curl -sS --max-time 30 -o "$TMP/models.json" -w '%{http_code}' -K - "$BASE/v1/models" 2>/dev/null)" || MCODE="000"
 if [ "$MCODE" != "200" ]; then
   msg="$(grep -o '"message"[[:space:]]*:[[:space:]]*"[^"]*"' "$TMP/models.json" 2>/dev/null | head -1 | sed -E 's/.*:[[:space:]]*"(.*)"$/\1/')"
   fail http_error "Could not list models (HTTP $MCODE)${msg:+: $msg}"
@@ -204,7 +207,7 @@ request_one() { # one image per request; runs in the background
     [ -n "$BACKGROUND" ] && args+=(--form-string "background=$BACKGROUND")
     local r; for r in "${REFS[@]}"; do args+=(-F "image[]=@$(native_path "$r")"); done
     [ -n "$MASK" ] && args+=(-F "mask=@$(native_path "$MASK")")
-    code="$(curl -sS --max-time 540 -o "$resp" -w '%{http_code}' -K "$AUTH" "${args[@]}" "$BASE/v1/images/edits" 2>"$TMP/err-$i")"
+    code="$(auth_cfg | curl -sS --max-time 540 -o "$resp" -w '%{http_code}' -K - "${args[@]}" "$BASE/v1/images/edits" 2>"$TMP/err-$i")"
     rc=$?
   else
     local body="{\"model\":\"$(json_escape "$MODEL")\",\"prompt\":\"$(json_escape "$PROMPT")\",\"n\":1,\"output_format\":\"$FORMAT\""
@@ -212,8 +215,10 @@ request_one() { # one image per request; runs in the background
     [ -n "$QUALITY" ] && body="$body,\"quality\":\"$QUALITY\""
     [ -n "$BACKGROUND" ] && body="$body,\"background\":\"$BACKGROUND\""
     body="$body}"
-    code="$(printf '%s' "$body" | curl -sS --max-time 540 -o "$resp" -w '%{http_code}' \
-      -K "$AUTH" -H "Content-Type: application/json" --data-binary @- \
+    # stdin carries the key, so the (non-secret) body goes through a file.
+    printf '%s' "$body" > "$TMP/body-$i.json"
+    code="$(auth_cfg | curl -sS --max-time 540 -o "$resp" -w '%{http_code}' \
+      -K - -H "Content-Type: application/json" --data-binary "@$(native_path "$TMP/body-$i.json")" \
       "$BASE/v1/images/generations" 2>"$TMP/err-$i")"
     rc=$?
   fi
@@ -356,6 +361,12 @@ for i in $(seq 1 "$N"); do
   if [ -n "$WANT_W" ]; then
     if [ -n "$dims" ]; then [ "$dims" != "$WANT_W $WANT_H" ] && need=1
     elif [ -n "$TARGET_W" ]; then need=1; fi
+  fi
+  # --no-upscale: a smaller image at the requested aspect ratio (within 1%) is kept as is.
+  if [ "$need" -eq 1 ] && [ "$NO_UPSCALE" -eq 1 ] && [ -n "$dims" ] \
+     && awk -v w="${dims% *}" -v h="${dims#* }" -v W="$WANT_W" -v H="$WANT_H" \
+          'BEGIN { r = (w / h) / (W / H); exit !(w <= W && h <= H && r > 0.99 && r < 1.01) }'; then
+    need=0; RESIZE_NOTE="kept the model's smaller image as is (--no-upscale)"
   fi
   if [ "$need" -eq 1 ]; then
     if resize_to_target "$target" "$WANT_W" "$WANT_H"; then

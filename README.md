@@ -24,16 +24,16 @@ Ask in plain language — "make a favicon for this project", "a 1200×630 OG ima
 macOS / Linux / Git Bash:
 
 ```bash
-curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash
+curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash
 ```
 
 Windows PowerShell:
 
 ```powershell
-irm https://buzzai.cc/sh/buzz-image.ps1 | iex
+irm https://buzzgw.com/sh/buzz-image.ps1 | iex
 ```
 
-If `buzzai.cc` does not connect from your network, use `buzzgw.com` in the command instead; both serve the same files.
+`buzzgw.com` and `buzzai.cc` serve the same files; use whichever connects from your network.
 
 The skill is installed to `~/.claude/skills/buzz-image/` (respects `CLAUDE_CONFIG_DIR`). Restart Claude Code or run `/reload-skills`. Run the same command again to update.
 
@@ -66,11 +66,11 @@ Full guide: <https://buzzai.cc/docs/guides/claude-code-image>
 ## Uninstall
 
 ```bash
-curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash -s -- --uninstall
+curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash -s -- --uninstall
 ```
 
 ```powershell
-$env:BUZZ_IMAGE_UNINSTALL=1; irm https://buzzai.cc/sh/buzz-image.ps1 | iex
+$env:BUZZ_IMAGE_UNINSTALL=1; irm https://buzzgw.com/sh/buzz-image.ps1 | iex
 ```
 
 ---
@@ -89,7 +89,7 @@ $env:BUZZ_IMAGE_UNINSTALL=1; irm https://buzzai.cc/sh/buzz-image.ps1 | iex
 
 **使用要求**：Claude Code 已接入 BUZZ；密钥所在分组包含 GPT Image 模型（`gpt-image-*`），否则请在 BUZZ 控制台的令牌管理里修改分组。
 
-**安装**：macOS / Linux / Git Bash 运行 `curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash`，Windows PowerShell 运行 `irm https://buzzai.cc/sh/buzz-image.ps1 | iex`。如果 `buzzai.cc` 连不上，把命令里的域名换成 `buzzgw.com`，两者内容相同。装好后重启 Claude Code，或执行 `/reload-skills`。重新运行同一条命令即可更新。
+**安装**：macOS / Linux / Git Bash 运行 `curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash`，Windows PowerShell 运行 `irm https://buzzgw.com/sh/buzz-image.ps1 | iex`。`buzzgw.com` 和 `buzzai.cc` 内容相同，哪个能连上用哪个。装好后重启 Claude Code，或执行 `/reload-skills`。重新运行同一条命令即可更新。
 
 如果 Claude Code 经本地中继或代理接入 BUZZ，把 `BUZZ_BASE_URL` 设为你的 BUZZ API 地址（环境变量，或 Claude Code `settings.json` 的 `env` 块）。密钥从 Claude Code 自己的配置读取，支持 `apiKeyHelper`。
 
