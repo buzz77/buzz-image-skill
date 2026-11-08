@@ -21,7 +21,7 @@ PROMPT="" OUT="" MODEL="" SIZE="" QUALITY="" BACKGROUND="" FORMAT="png" N=1 MASK
 LIST_MODELS=0 NO_UPSCALE=0
 REFS=()
 
-BUZZ_IMAGE_VERSION="1.2"
+BUZZ_IMAGE_VERSION="1.3.0"
 # Every request identifies itself, so gateway logs can tell skill traffic apart.
 curl() { command curl -A "buzz-image/$BUZZ_IMAGE_VERSION" "$@"; }
 
@@ -126,7 +126,11 @@ settings_val() { # read "KEY": "value" from Claude Code settings (env block or t
 # talks to BUZZ through a local relay or proxy.
 BASE="${BUZZ_BASE_URL:-${ANTHROPIC_BASE_URL:-}}"
 [ -n "$BASE" ] || BASE="$(settings_val BUZZ_BASE_URL || settings_val ANTHROPIC_BASE_URL || true)"
-KEY="${ANTHROPIC_AUTH_TOKEN:-${ANTHROPIC_API_KEY:-}}"
+# BUZZ_IMAGE_API_KEY: an optional key just for images (e.g. a token in a group that
+# has gpt-image models), so chat and images can use different keys at the same time.
+KEY="${BUZZ_IMAGE_API_KEY:-}"
+[ -n "$KEY" ] || KEY="$(settings_val BUZZ_IMAGE_API_KEY || true)"
+[ -n "$KEY" ] || KEY="${ANTHROPIC_AUTH_TOKEN:-${ANTHROPIC_API_KEY:-}}"
 [ -n "$KEY" ] || KEY="$(settings_val ANTHROPIC_AUTH_TOKEN || settings_val ANTHROPIC_API_KEY || true)"
 if [ -z "$KEY" ]; then
   # Claude Code's apiKeyHelper: a command that prints the key. Run it the same way.
@@ -166,7 +170,7 @@ AVAILABLE="$(grep -o '"id"[[:space:]]*:[[:space:]]*"gpt-image[^"]*"' "$TMP/model
 models_json() { local out="" m; for m in $AVAILABLE; do out="${out:+$out,}\"$m\""; done; printf '[%s]' "$out"; }
 
 if [ -z "$AVAILABLE" ]; then
-  fail no_image_model "Your key's group has no GPT Image model. Change the key's group in the BUZZ console to one that includes gpt-image models." '"available_models":[]'
+  fail no_image_model "Your key's group has no GPT Image model. Change the key's group in the BUZZ console to one that includes gpt-image models, or set BUZZ_IMAGE_API_KEY to a separate key whose group has them." '"available_models":[]'
 fi
 if [ "$LIST_MODELS" -eq 1 ]; then
   printf '{"ok":true,"models":%s}\n' "$(models_json)"

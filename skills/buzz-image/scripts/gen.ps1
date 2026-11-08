@@ -22,7 +22,7 @@ param(
   [switch]$NoUpscale
 )
 
-$BuzzImageVersion = "1.2"
+$BuzzImageVersion = "1.3.0"
 
 $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
@@ -101,7 +101,11 @@ $base = $env:BUZZ_BASE_URL
 if (-not $base) { $base = $env:ANTHROPIC_BASE_URL }
 if (-not $base) { $base = SettingsVal "BUZZ_BASE_URL" }
 if (-not $base) { $base = SettingsVal "ANTHROPIC_BASE_URL" }
-$key = $env:ANTHROPIC_AUTH_TOKEN
+# BUZZ_IMAGE_API_KEY: an optional key just for images (e.g. a token in a group that
+# has gpt-image models), so chat and images can use different keys at the same time.
+$key = $env:BUZZ_IMAGE_API_KEY
+if (-not $key) { $key = SettingsVal "BUZZ_IMAGE_API_KEY" }
+if (-not $key) { $key = $env:ANTHROPIC_AUTH_TOKEN }
 if (-not $key) { $key = $env:ANTHROPIC_API_KEY }
 if (-not $key) { $key = SettingsVal "ANTHROPIC_AUTH_TOKEN" }
 if (-not $key) { $key = SettingsVal "ANTHROPIC_API_KEY" }
@@ -181,7 +185,7 @@ if (-not $mr.IsSuccessStatusCode) {
 try { $available = @(($mt | ConvertFrom-Json).data | ForEach-Object { [string]$_.id } | Where-Object { $_ -like "gpt-image*" } | Sort-Object -Unique) } catch { }
 
 if ($available.Count -eq 0) {
-  Fail "no_image_model" "Your key's group has no GPT Image model. Change the key's group in the BUZZ console to one that includes gpt-image models." @{ available_models = @() }
+  Fail "no_image_model" "Your key's group has no GPT Image model. Change the key's group in the BUZZ console to one that includes gpt-image models, or set BUZZ_IMAGE_API_KEY to a separate key whose group has them." @{ available_models = @() }
 }
 if ($Models) { Emit ([ordered]@{ ok = $true; models = $available }); exit 0 }
 if ($Model) {

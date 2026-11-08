@@ -37,7 +37,7 @@ irm https://buzzgw.com/sh/buzz-image.ps1 | iex
 
 The skill is installed to `~/.claude/skills/buzz-image/` (respects `CLAUDE_CONFIG_DIR`). Restart Claude Code or run `/reload-skills`. Run the same command again to update.
 
-If Claude Code reaches BUZZ through a local relay or proxy, set `BUZZ_BASE_URL` to your BUZZ API address (environment variable, or the `env` block of Claude Code's `settings.json`). The key is read from Claude Code's own configuration, including `apiKeyHelper`.
+If Claude Code reaches BUZZ through a local relay or proxy, set `BUZZ_BASE_URL` to your BUZZ API address (environment variable, or the `env` block of Claude Code's `settings.json`). The key is read from Claude Code's own configuration, including `apiKeyHelper`. To use a different key for images than for chat (for example a token in a group with `gpt-image-*` models), set `BUZZ_IMAGE_API_KEY`; it takes precedence.
 
 Alternatively, with the [`skills`](https://github.com/vercel-labs/skills) CLI:
 
@@ -91,7 +91,7 @@ $env:BUZZ_IMAGE_UNINSTALL=1; irm https://buzzgw.com/sh/buzz-image.ps1 | iex
 
 **安装**：macOS / Linux / Git Bash 运行 `curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash`，Windows PowerShell 运行 `irm https://buzzgw.com/sh/buzz-image.ps1 | iex`。`buzzgw.com` 和 `buzzai.cc` 内容相同，哪个能连上用哪个。装好后重启 Claude Code，或执行 `/reload-skills`。重新运行同一条命令即可更新。
 
-如果 Claude Code 经本地中继或代理接入 BUZZ，把 `BUZZ_BASE_URL` 设为你的 BUZZ API 地址（环境变量，或 Claude Code `settings.json` 的 `env` 块）。密钥从 Claude Code 自己的配置读取，支持 `apiKeyHelper`。
+如果 Claude Code 经本地中继或代理接入 BUZZ，把 `BUZZ_BASE_URL` 设为你的 BUZZ API 地址（环境变量，或 Claude Code `settings.json` 的 `env` 块）。密钥从 Claude Code 自己的配置读取，支持 `apiKeyHelper`。对话和生图想用不同的令牌（比如另建一个含 `gpt-image-*` 的分组令牌），设置 `BUZZ_IMAGE_API_KEY` 即可，会优先使用。
 
 完整教程：<https://buzzai.cc/docs/zh/guides/claude-code-image>
 

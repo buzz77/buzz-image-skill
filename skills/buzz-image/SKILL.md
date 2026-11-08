@@ -4,11 +4,13 @@ description: "Generate or edit images with GPT Image through BUZZ and save them 
 allowed-tools:
   - Bash(bash ${CLAUDE_SKILL_DIR}/scripts/gen.sh *)
   - PowerShell(${CLAUDE_SKILL_DIR}/scripts/gen.ps1 *)
+metadata:
+  version: "1.3.0"
 ---
 
 # buzz-image
 
-Generates and edits images with GPT Image through the BUZZ gateway that this Claude Code is connected to. It reuses Claude Code's own BUZZ key (from its env, settings or `apiKeyHelper`); nothing else needs to be installed or configured. If Claude Code reaches BUZZ through a local relay or proxy, the user can set `BUZZ_BASE_URL` to their BUZZ API address to send image requests there directly. Always use the bundled script — never write your own API calls for images, and never look for or print API keys.
+Generates and edits images with GPT Image through the BUZZ gateway that this Claude Code is connected to. It reuses Claude Code's own BUZZ key (from its env, settings or `apiKeyHelper`); nothing else needs to be installed or configured. To use a different key for images than for chat (e.g. a token in a group with gpt-image models), the user can set `BUZZ_IMAGE_API_KEY`; it takes precedence. If Claude Code reaches BUZZ through a local relay or proxy, the user can set `BUZZ_BASE_URL` to their BUZZ API address to send image requests there directly. Always use the bundled script — never write your own API calls for images, and never look for or print API keys.
 
 Reply to the user in the language they use.
 
@@ -71,7 +73,7 @@ The script prints one JSON line. Success: `{"ok":true,"model":..,"files":[..],"s
 |---|---|
 | `not_buzz` | The address didn't identify itself as BUZZ, so buzz-image can't run. Relay the message. If the user reaches BUZZ through a local relay or proxy, they can set `BUZZ_BASE_URL` to their BUZZ API address (env var, or the `env` block of Claude Code's settings.json). Stop. |
 | `no_key` | No API key in Claude Code's configuration. Stop. |
-| `no_image_model` | Their key's group has no GPT Image model; change the key's group in the BUZZ console (API keys page) to one that includes gpt-image models. Stop. |
+| `no_image_model` | Their key's group has no GPT Image model; change the key's group in the BUZZ console (API keys page) to one that includes gpt-image models, or set `BUZZ_IMAGE_API_KEY` to a separate key whose group has them (env var, or the `env` block of Claude Code's settings.json). Stop. |
 | `model_unavailable` | That model isn't available for their key; show `available_models` and let them choose. |
 | `insufficient_balance` | Balance too low; top up in the BUZZ console. Stop. |
 | `content_policy` | Relay the message; let the user decide how to rephrase. Don't rephrase and retry on your own. |
