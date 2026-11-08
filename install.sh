@@ -2,8 +2,8 @@
 ################################################################################
 # BUZZ AI - buzz-image skill 安装器
 #
-# 安装 / 更新: curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash
-# 卸载:        curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash -s -- --uninstall
+# 安装 / 更新: curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash
+# 卸载:        curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash -s -- --uninstall
 #              (或设置环境变量 BUZZ_IMAGE_UNINSTALL=1)
 # 帮助:        bash buzz-image.sh --help
 #
@@ -11,10 +11,12 @@
 # 不读取、不打印 API key。依赖: bash、curl 与常见的 coreutils。
 ################################################################################
 
-# buzzgw.com first: reachable on networks where buzzai.cc is blocked; buzzai.cc as fallback.
-BUZZ_SITES="https://buzzgw.com https://buzzai.cc"
+# Route A, route B. Not tried in a fixed order: each is latency-tested and the
+# fastest reachable one is used (see order_sites); BUZZ_SITE overrides.
+BUZZ_SITES="https://buzzai.cc https://buzzgw.com"
 SKILL_REL="sh/skills/buzz-image"
-DOCS_URL="https://buzzgw.com/docs/guides/claude-code-image.html"
+DOCS_PATH="docs/guides/claude-code-image.html"
+DOCS_URL="https://buzzai.cc/$DOCS_PATH"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -83,12 +85,12 @@ show_help() {
   BUZZ AI - buzz-image skill installer
 
   Usage:
-    curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash     install / update
+    curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash     install / update
     bash buzz-image.sh --uninstall                           uninstall
     bash buzz-image.sh --help                                show this help
 
   Environment:
-    BUZZ_SITE=URL             download site (default: try buzzgw.com, then buzzai.cc)
+    BUZZ_SITE=URL             download site (default: the fastest of buzzai.cc / buzzgw.com)
     CLAUDE_CONFIG_DIR=DIR     Claude Code config dir (default: ~/.claude)
     BUZZ_IMAGE_UNINSTALL=1    same as --uninstall
 
@@ -99,12 +101,12 @@ EOF
   BUZZ AI - buzz-image skill 安装器
 
   用法:
-    curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash     安装 / 更新
+    curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash     安装 / 更新
     bash buzz-image.sh --uninstall                           卸载
     bash buzz-image.sh --help                                显示帮助
 
   环境变量:
-    BUZZ_SITE=URL             指定下载站点(默认依次尝试 buzzgw.com、buzzai.cc)
+    BUZZ_SITE=URL             指定下载站点(默认对 buzzai.cc、buzzgw.com 测速后选最快的)
     CLAUDE_CONFIG_DIR=DIR     Claude Code 配置目录(默认 ~/.claude)
     BUZZ_IMAGE_UNINSTALL=1    等同于 --uninstall
 
@@ -144,18 +146,36 @@ validate_file() {
 }
 
 # 依次尝试站点,第一个能成功下载并通过校验的 SKILL.md 决定站点;返回站点到 SITE 变量
+# Prints the sites fastest first (GET /ping); unreachable ones go last but are still tried.
+order_sites() {
+  local s out ok="" bad=""
+  for s in $BUZZ_SITES; do
+    out="$(curl -s -o /dev/null --connect-timeout 3 --max-time 5 -w '%{http_code} %{time_total}' "$s/ping" 2>/dev/null)"
+    if [ "${out%% *}" = "200" ]; then
+      ok="$ok$(awk -v t="${out##* }" 'BEGIN{printf "%d", t*1000}') $s
+"
+    else
+      bad="$bad $s"
+    fi
+  done
+  printf '%s' "$ok" | sort -n | awk 'NF{print $2}'
+  for s in $bad; do printf '%s\n' "$s"; done
+}
+
 pick_site() {
   local candidates site
   if [ -n "${BUZZ_SITE:-}" ]; then
     candidates="${BUZZ_SITE%/}"
   else
-    candidates="$BUZZ_SITES"
+    print_status info "$(t "正在测试线路延迟..." "Testing route latency...")"
+    candidates="$(order_sites)"
   fi
   for site in $candidates; do
     print_status info "$(t "正在从 $site 下载 skill 文件" "Downloading skill files from $site")"
     if fetch "$site/$SKILL_REL/SKILL.md" "$TMP_DIR/SKILL.md" 2>/dev/null \
        && validate_file "$TMP_DIR/SKILL.md" "SKILL.md"; then
       SITE="$site"
+      DOCS_URL="$site/$DOCS_PATH"
       return 0
     fi
     rm -f "$TMP_DIR/SKILL.md"

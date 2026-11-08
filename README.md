@@ -21,19 +21,21 @@ Ask in plain language — "make a favicon for this project", "a 1200×630 OG ima
 
 ## Install
 
-macOS / Linux / Git Bash:
+macOS / Linux / Git Bash — route A (buzzai.cc) or route B (buzzgw.com):
 
 ```bash
+curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash
 curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash
 ```
 
-Windows PowerShell:
+Windows PowerShell — route A or route B:
 
 ```powershell
+irm https://buzzai.cc/sh/buzz-image.ps1 | iex
 irm https://buzzgw.com/sh/buzz-image.ps1 | iex
 ```
 
-`buzzgw.com` and `buzzai.cc` serve the same files; use whichever connects from your network.
+Run one of them. Both routes serve the same files; use one that connects. The installer also latency-tests both routes and downloads from the fastest.
 
 The skill is installed to `~/.claude/skills/buzz-image/` (respects `CLAUDE_CONFIG_DIR`). Restart Claude Code or run `/reload-skills`. Run the same command again to update.
 
@@ -89,7 +91,7 @@ $env:BUZZ_IMAGE_UNINSTALL=1; irm https://buzzgw.com/sh/buzz-image.ps1 | iex
 
 **使用要求**：Claude Code 已接入 BUZZ；密钥所在分组包含 GPT Image 模型（`gpt-image-*`），否则请在 BUZZ 控制台的令牌管理里修改分组。
 
-**安装**：macOS / Linux / Git Bash 运行 `curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash`，Windows PowerShell 运行 `irm https://buzzgw.com/sh/buzz-image.ps1 | iex`。`buzzgw.com` 和 `buzzai.cc` 内容相同，哪个能连上用哪个。装好后重启 Claude Code，或执行 `/reload-skills`。重新运行同一条命令即可更新。
+**安装**：macOS / Linux / Git Bash 运行 `curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash`（线路 A）或 `curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash`（线路 B）；Windows PowerShell 运行 `irm https://buzzai.cc/sh/buzz-image.ps1 | iex`（线路 A）或 `irm https://buzzgw.com/sh/buzz-image.ps1 | iex`（线路 B）。两条线路内容相同，用能连上的那条；安装器还会测速，从最快的线路下载。装好后重启 Claude Code，或执行 `/reload-skills`。重新运行同一条命令即可更新。
 
 如果 Claude Code 经本地中继或代理接入 BUZZ，把 `BUZZ_BASE_URL` 设为你的 BUZZ API 地址（环境变量，或 Claude Code `settings.json` 的 `env` 块）。密钥从 Claude Code 自己的配置读取，支持 `apiKeyHelper`。对话和生图想用不同的令牌（比如另建一个含 `gpt-image-*` 的分组令牌），设置 `BUZZ_IMAGE_API_KEY` 即可，会优先使用。
 

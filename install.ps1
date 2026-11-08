@@ -1,6 +1,6 @@
 # BUZZ AI - buzz-image skill installer (Windows PowerShell 5.1+)
 #
-# Install / update: irm https://buzzgw.com/sh/buzz-image.ps1 | iex
+# Install / update: irm https://buzzai.cc/sh/buzz-image.ps1 | iex
 # Uninstall:        powershell -NoProfile -ExecutionPolicy Bypass -File buzz-image.ps1 -Uninstall
 #                   (with irm | iex, set $env:BUZZ_IMAGE_UNINSTALL = '1' first)
 # Help:             -Help
@@ -14,10 +14,12 @@ param(
     [switch]$Help
 )
 
-# buzzgw.com first: reachable on networks where buzzai.cc is blocked; buzzai.cc as fallback.
-$BuzzSites = @('https://buzzgw.com', 'https://buzzai.cc')
+# Route A, route B. Not tried in a fixed order: each is latency-tested and the
+# fastest reachable one is used (see Get-SiteOrder); BUZZ_SITE overrides.
+$BuzzSites = @('https://buzzai.cc', 'https://buzzgw.com')
 $SkillRel = 'sh/skills/buzz-image'
-$DocsUrl = 'https://buzzgw.com/docs/guides/claude-code-image.html'
+$DocsPath = 'docs/guides/claude-code-image.html'
+$DocsUrl = 'https://buzzai.cc/' + $DocsPath
 
 # Bilingual message helper. Language follows the system UI culture (en* -> English, else Chinese).
 function T([string]$zh, [string]$en) {
@@ -42,13 +44,13 @@ function Show-Help {
     Write-Host (T 'buzz-image \u6280\u80fd\u5b89\u88c5\u5668' 'BUZZ AI - buzz-image skill installer')
     Write-Host ''
     Write-Host (T '  \u7528\u6cd5:' '  Usage:')
-    Write-Host '    irm https://buzzgw.com/sh/buzz-image.ps1 | iex              '
+    Write-Host '    irm https://buzzai.cc/sh/buzz-image.ps1 | iex              '
     Write-Host ('      ' + (T '\u5b89\u88c5 / \u66f4\u65b0' 'install / update'))
     Write-Host '    powershell -ExecutionPolicy Bypass -File buzz-image.ps1 -Uninstall'
     Write-Host ('      ' + (T '\u5378\u8f7d' 'uninstall'))
     Write-Host ''
     Write-Host (T '  \u73af\u5883\u53d8\u91cf:' '  Environment:')
-    Write-Host (T '    BUZZ_SITE=URL             \u6307\u5b9a\u4e0b\u8f7d\u7ad9\u70b9(\u9ed8\u8ba4\u4f9d\u6b21\u5c1d\u8bd5 buzzgw.com\u3001buzzai.cc)' '    BUZZ_SITE=URL             download site (default: try buzzgw.com, then buzzai.cc)')
+    Write-Host (T '    BUZZ_SITE=URL             \u6307\u5b9a\u4e0b\u8f7d\u7ad9\u70b9(\u9ed8\u8ba4\u5bf9 buzzai.cc\u3001buzzgw.com \u6d4b\u901f\u540e\u9009\u6700\u5feb\u7684)' '    BUZZ_SITE=URL             download site (default: the fastest of buzzai.cc / buzzgw.com)')
     Write-Host (T '    CLAUDE_CONFIG_DIR=DIR     Claude Code \u914d\u7f6e\u76ee\u5f55(\u9ed8\u8ba4\u4e3a\u7528\u6237\u76ee\u5f55\u4e0b\u7684 .claude)' '    CLAUDE_CONFIG_DIR=DIR     Claude Code config dir (default: $HOME\.claude)')
     Write-Host (T '    BUZZ_IMAGE_UNINSTALL=1    \u7b49\u540c\u4e8e -Uninstall' '    BUZZ_IMAGE_UNINSTALL=1    same as -Uninstall')
     Write-Host ''
@@ -101,16 +103,37 @@ function Test-SkillFile([string]$Path, [string]$Name) {
 }
 
 # Tries each site in order; the first whose SKILL.md downloads and validates wins. Returns the site URL.
+# Sites fastest first (GET /ping); unreachable ones go last but are still tried.
+function Get-SiteOrder {
+    $ok = @(); $bad = @()
+    foreach ($s in $BuzzSites) {
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            $r = Invoke-WebRequest -Uri ($s + '/ping') -UseBasicParsing -TimeoutSec 4
+            if ([int]$r.StatusCode -eq 200) {
+                $ok += [pscustomobject]@{ Site = $s; Ms = $sw.ElapsedMilliseconds }
+                continue
+            }
+        } catch {
+            # Unreachable: tried last.
+        }
+        $bad += $s
+    }
+    return @(@($ok | Sort-Object Ms | ForEach-Object { $_.Site }) + $bad)
+}
+
 function Select-Site([string]$TmpDir) {
     if ($env:BUZZ_SITE) {
         $candidates = @($env:BUZZ_SITE.Trim().TrimEnd('/'))
     } else {
-        $candidates = $BuzzSites
+        Write-Status 'info' (T '\u6b63\u5728\u6d4b\u8bd5\u7ebf\u8def\u5ef6\u8fdf...' 'Testing route latency...')
+        $candidates = Get-SiteOrder
     }
     foreach ($site in $candidates) {
         Write-Status 'info' (T ('\u6b63\u5728\u4ece ' + $site + ' \u4e0b\u8f7d skill \u6587\u4ef6') ('Downloading skill files from ' + $site))
         $dest = Join-Path $TmpDir 'SKILL.md'
         if ((Get-SkillFile "$site/$SkillRel/SKILL.md" $dest 15) -and (Test-SkillFile $dest 'SKILL.md')) {
+            $script:DocsUrl = $site + '/' + $DocsPath
             return $site
         }
         Write-Status 'warn' ($site + ' ' + (T '\u4e0d\u53ef\u7528,\u5c1d\u8bd5\u4e0b\u4e00\u4e2a\u7ad9\u70b9' 'unavailable, trying next site'))
