@@ -67,12 +67,14 @@ Full guide: <https://buzzai.cc/docs/guides/claude-code-image>
 
 ## Uninstall
 
+Use either route (replace `buzzai.cc` with `buzzgw.com` for route B):
+
 ```bash
-curl -fsSL https://buzzgw.com/sh/buzz-image.sh | bash -s -- --uninstall
+curl -fsSL https://buzzai.cc/sh/buzz-image.sh | bash -s -- --uninstall
 ```
 
 ```powershell
-$env:BUZZ_IMAGE_UNINSTALL=1; irm https://buzzgw.com/sh/buzz-image.ps1 | iex
+$env:BUZZ_IMAGE_UNINSTALL=1; irm https://buzzai.cc/sh/buzz-image.ps1 | iex
 ```
 
 ---
